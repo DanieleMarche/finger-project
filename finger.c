@@ -9,7 +9,24 @@
 #include <sys/stat.h>
 #include <string.h>
 
-void get_user_gecos(const char *username, char *gecos_info, size_t len) {
+void change_config(int* config, char* string) {
+    int a = strlen(string);
+    for(int j = 1; j < a; j++){
+        switch(string[j]) {
+            case 'l': config[0] = 1; break;
+            case 'm': config[1] = 1; break;
+            case 's': config[2] = 1; break;
+            case 'p': config[3] = 1; break;
+            default: printf("Invalid Option"); exit(EXIT_FAILURE);
+        }
+    }
+
+    if(config[0] == 1) {
+        config[2] = 0;
+    }
+}
+
+char* get_user_gecos(const char *username, char *gecos_info, size_t len) {
     struct passwd *pwd = getpwnam(username);
     if (pwd) {
         strncpy(gecos_info, pwd->pw_gecos, len - 1);
@@ -17,6 +34,8 @@ void get_user_gecos(const char *username, char *gecos_info, size_t len) {
     } else {
         strncpy(gecos_info, "N/A", len);
     }
+
+    return gecos_info;
 }
 
 char* format_login_time(time_t login_time) {
@@ -83,19 +102,19 @@ long calculate_idle_time(const char *tty_name) {
     return (long)difftime(current_time, statbuf.st_atime);
 }
 
-char* s_format(struct utmp utmp_record) {
+void s_format(struct utmp utmp_record) {
     char tty_path[256];
-                snprintf(tty_path, sizeof(tty_path), "/dev/%s", utmp_record.ut_line);
-            
-                long idle_time = calculate_idle_time(tty_path);
-                
-                printf("%-15s %-15s %-15s %-15s %-15s", 
-                    utmp_record.ut_user, 
-                    utmp_record.ut_host, 
-                    time_to_string(idle_time),
-                    format_login_time(utmp_record.ut_tv.tv_sec),
-                    utmp_record.ut_line);
-                printf("\n");
+    snprintf(tty_path, sizeof(tty_path), "/dev/%s", utmp_record.ut_line);
+
+    long idle_time = calculate_idle_time(tty_path);
+    
+    printf("%-15s %-15s %-15s %-15s %-15s", 
+        utmp_record.ut_user, 
+        utmp_record.ut_host, 
+        time_to_string(idle_time),
+        format_login_time(utmp_record.ut_tv.tv_sec),
+        utmp_record.ut_line);
+    printf("\n");
 }
 
 
@@ -127,29 +146,35 @@ int main(int argc, char *argv[]) {
     } else {
         
         int* config = (int*) calloc(4, sizeof(int));
+        char** users = NULL;
+        int total_users = 0;
 
         for(int i = 1; i < argc; i++) {
             if(argv[i][0] == '-') {
-                int a = strlen(argv[i]);
-                for(int j = 1; j < a; j++){
-                    switch(argv[i][j]) {
-                        case 'l': config[0] = 1; break;
-                        case 'm': config[1] = 1; break;
-                        case 's': config[2] = 1; break;
-                        case 'p': config[3] = 1; break;
-                        default: printf("Invalid Option"); exit(EXIT_FAILURE);
-                    }
+                change_config(config, argv[i]);
+            }
+            else{
+                
+                total_users++;
+                users = (char**)realloc(users, (total_users) * sizeof(char*));
+                if(users == NULL) {
+                    perror("memory allocation failure");
+                    exit(0);
                 }
-            }
 
-            if(config[0] == 1) {
-                config[2] = 0;
+                users[total_users - 1] = (char*) malloc((strlen(argv[i]) + 1) * sizeof(char));
+                if(users[total_users - 1] == NULL) {
+                    perror("memory allocation failure");
+                    exit(1);
+                }
+                
+                strcpy(users[total_users -1], argv[i]);
+                
             }
-            
         }
         
-
         free(config);
+        free(users);
 
     }
 
