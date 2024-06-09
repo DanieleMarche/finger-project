@@ -72,7 +72,7 @@ void free_gecos_fields(char **fields) {
     free(fields);
 }
 
-struct utmp* get_logged_users(int fd, int *total_users) {
+struct utmp *get_logged_users(int fd, int *total_users) {
     struct utmp *logged_users = NULL;
     int total_logged_users = 0;
     struct utmp utmp_buf;
@@ -100,8 +100,8 @@ void change_config(int* config, char* string) {
         switch(string[j]) {
             case 'l': config[0] = 1; break;
             case 'm': config[1] = 1; break;
-            case 's': config[2] = 1; break;
-            case 'p': config[3] = 1; break;
+            case 's': config[0] = 0; break;
+            case 'p': config[2] = 1; break;
             default: printf("Invalid Option"); exit(EXIT_FAILURE);
         }
     }
@@ -187,7 +187,7 @@ long calculate_idle_time(const char *tty_name) {
     return (long)difftime(current_time, statbuf.st_atime);
 }
 
-void s_format(struct utmp utmp_record) {
+void print_s_format_single_user(struct utmp utmp_record) {
     char tty_path[256];
     snprintf(tty_path, sizeof(tty_path), "/dev/%s", utmp_record.ut_line);
 
@@ -210,6 +210,14 @@ void s_format(struct utmp utmp_record) {
     free_gecos_fields(user_gecos);
 }
 
+void print_s_format(int *config, int total_users, struct utmp *users) {
+    printf("%-15s %-15s %-15s %-15s %-15s %-15s %-15s\n", "Login", "Name",
+     "Tty", "Idle", "Login Time", "Office", "Office Phone");
+    for(int i = 0; i < total_users; i++) {
+        print_s_format_single_user(users[i]);
+    }
+}
+
 void l_format(char* config, char** users, int total_users) {
     if(total_users == 0) {
 
@@ -222,7 +230,7 @@ int main(int argc, char *argv[]) {
     if (argc <= 1) {
 
         int fd_utmp, fd_pwd; 
-        //struct pwd passwd_record;
+        int config[] = {0, 0, 0};
 
         fd_utmp = open(UTMP_FILE, O_RDONLY);
 
@@ -230,18 +238,19 @@ int main(int argc, char *argv[]) {
             perror("Something went wrong:");
             return 0;
         }
-
-        printf("%-15s %-15s %-15s %-15s %-15s %-15s %-15s\n", "Login", "Name", "Tty", "Idle", "Login Time", "Office", "Office Phone");
+        
         int total_users = 0;
-        struct utmp *users = get_logged_users(fd_utmp, &total_users);
 
-        for(int i = 0; i < total_users; i++) {
-            s_format(users[i]);
-        }
+        struct utmp *users = get_logged_users(fd_utmp, &total_users);
+        
+        print_s_format(config, total_users, users);
+
+        free(users);
+
 
     } else {
         
-        int* config = (int*) calloc(4, sizeof(int));
+        int* config = (int*) calloc(3, sizeof(int));
         char** users = NULL;
         int total_users = 0;
 
@@ -269,7 +278,9 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        
+        if(config[0] == 0) {
+            //TODO
+        }
         
         free(config);
         free(users);
@@ -278,5 +289,4 @@ int main(int argc, char *argv[]) {
 
     return 0;
 
-    
 }
