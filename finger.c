@@ -9,6 +9,91 @@
 #include <sys/stat.h>
 #include <string.h>
 
+#define MAX_FIELDS 5 // Numero massimo di campi nel campo GECOS
+
+struct passwd *get_pwd_record(char *username) {
+    struct passwd *pwd = getpwnam(username);
+    if(pwd == NULL) {
+        perror("Error getting user information");
+        exit(0);
+    }
+    return pwd;
+}
+
+// Funzione per dividere la stringa GECOS e inserirla in un array di stringhe
+char** split_gecos(const char *gecos) {
+    char *gecos_copy = strdup(gecos);
+    if (gecos_copy == NULL) {
+        perror("Memory allocation failure");
+        exit(EXIT_FAILURE);
+    }
+
+    char **fields = malloc(MAX_FIELDS * sizeof(char*));
+    if (fields == NULL) {
+        perror("Memory allocation failure");
+        free(gecos_copy);
+        exit(EXIT_FAILURE);
+    }
+
+    int i = 0;
+    char *token = strtok(gecos_copy, ",");
+    while (token != NULL && i < MAX_FIELDS) {
+        fields[i] = strdup(token);
+        if (fields[i] == NULL) {
+            perror("Memory allocation failure");
+            // Free previously allocated memory
+            for (int j = 0; j < i; j++) {
+                free(fields[j]);
+            }
+            free(fields);
+            free(gecos_copy);
+            exit(EXIT_FAILURE);
+        }
+        i++;
+        token = strtok(NULL, ",");
+    }
+
+    // Se ci sono meno di MAX_FIELDS, riempi i restanti con NULL
+    for (int j = i; j < MAX_FIELDS; j++) {
+        fields[j] = NULL;
+    }
+
+    free(gecos_copy);
+    return fields;
+}
+
+// Funzione per liberare l'array di stringhe
+void free_gecos_fields(char **fields) {
+    for (int i = 0; i < MAX_FIELDS; i++) {
+        if (fields[i] != NULL) {
+            free(fields[i]);
+        }
+    }
+    free(fields);
+}
+
+struct utmp* get_logged_users(int fd, int *total_users) {
+    struct utmp *logged_users = NULL;
+    int total_logged_users = 0;
+    struct utmp utmp_buf;
+
+    while(read(fd, &utmp_buf, sizeof(utmp_buf)) == sizeof(utmp_buf)) {
+        if(utmp_buf.ut_type == USER_PROCESS) {
+            total_logged_users++;
+            logged_users = (struct utmp*)realloc(logged_users, total_logged_users * sizeof(struct utmp));
+            if(logged_users == NULL) {
+                perror("memori allocation failure");
+                exit(0);
+            }
+        memcpy(&logged_users[total_logged_users - 1], &utmp_buf, sizeof(struct utmp));
+        }
+
+   }
+
+   *total_users = total_logged_users;
+   return logged_users;
+}
+
 void change_config(int* config, char* string) {
     int a = strlen(string);
     for(int j = 1; j < a; j++){
@@ -107,14 +192,28 @@ void s_format(struct utmp utmp_record) {
     snprintf(tty_path, sizeof(tty_path), "/dev/%s", utmp_record.ut_line);
 
     long idle_time = calculate_idle_time(tty_path);
+
+    char real_name[256];
+    struct passwd *pwd = get_pwd_record(utmp_record.ut_user);
     
-    printf("%-15s %-15s %-15s %-15s %-15s", 
+    char **user_gecos = split_gecos(pwd->pw_gecos);
+    
+    printf("%-15s %-15s %-15s %-15s %-15s %-15s", 
         utmp_record.ut_user, 
+        user_gecos[0],
         utmp_record.ut_host, 
         time_to_string(idle_time),
         format_login_time(utmp_record.ut_tv.tv_sec),
         utmp_record.ut_line);
     printf("\n");
+
+    free_gecos_fields(user_gecos);
+}
+
+void l_format(char* config, char** users, int total_users) {
+    if(total_users == 0) {
+
+    }
 }
 
 
@@ -123,7 +222,6 @@ int main(int argc, char *argv[]) {
     if (argc <= 1) {
 
         int fd_utmp, fd_pwd; 
-        struct utmp utmp_record; 
         //struct pwd passwd_record;
 
         fd_utmp = open(UTMP_FILE, O_RDONLY);
@@ -133,14 +231,12 @@ int main(int argc, char *argv[]) {
             return 0;
         }
 
-        printf("%-15s %-15s %-15s %-15s %-15s %-15s\n", "Nome Utente", "Tty", "Idle", "Login Time", "Office", "Office Phone");
+        printf("%-15s %-15s %-15s %-15s %-15s %-15s %-15s\n", "Login", "Name", "Tty", "Idle", "Login Time", "Office", "Office Phone");
+        int total_users = 0;
+        struct utmp *users = get_logged_users(fd_utmp, &total_users);
 
-        while(read(fd_utmp, &utmp_record, sizeof(utmp_record)) == sizeof(utmp_record)) {
-            if (utmp_record.ut_type == USER_PROCESS) {
-
-                s_format(utmp_record);
-
-            }
+        for(int i = 0; i < total_users; i++) {
+            s_format(users[i]);
         }
 
     } else {
@@ -172,6 +268,8 @@ int main(int argc, char *argv[]) {
                 
             }
         }
+
+        
         
         free(config);
         free(users);
