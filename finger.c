@@ -8,8 +8,31 @@
 #include <time.h>
 #include <sys/stat.h>
 #include <string.h>
+#include <ctype.h>
 
 #define MAX_FIELDS 5 // Numero massimo di campi nel campo GECOS
+
+char *str_to_lower(const char *str) {
+    if (str == NULL) {
+        return NULL;
+    }
+
+    // Allocare memoria per la nuova stringa
+    char *lower_str = (char *)malloc(strlen(str) + 1);
+    if (lower_str == NULL) {
+        perror("malloc");
+        return NULL;
+    }
+
+    // Convertire i caratteri in minuscolo
+    for (int i = 0; str[i]; i++) {
+        lower_str[i] = tolower((unsigned char)str[i]);
+    }
+    lower_str[strlen(str)] = '\0'; // Aggiungere il terminatore null
+
+    return lower_str;
+}
+
 
 // Funzione per fare una copia profonda di una struttura passwd
 struct passwd *deep_copy_passwd(struct passwd *src) {
@@ -35,9 +58,13 @@ struct passwd **get_all_pwd_records_from_name(char *name, int *total_pwd_records
 
     setpwent(); // Riavvia la lettura del file passwd
 
+    char *low_name = str_to_lower(name);
+
     // Cerca tutte le corrispondenze nel campo GECOS
     while ((pwd = getpwent()) != NULL) {
-        if (strstr(pwd->pw_gecos, name) != NULL || strcmp(pwd->pw_name, name) == 0) {
+        char *low_gecos = str_to_lower(pwd->pw_gecos);
+        
+        if (strstr(low_gecos, low_name) != NULL || strcmp(pwd->pw_name, name) == 0) {
             total_pwd_entry_found++;
             all_pwd = realloc(all_pwd, total_pwd_entry_found * sizeof(struct passwd *));
             if (all_pwd == NULL) {
