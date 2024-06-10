@@ -11,13 +11,59 @@
 
 #define MAX_FIELDS 5 // Numero massimo di campi nel campo GECOS
 
-struct passwd *get_pwd_record(char *username) {
-    struct passwd *pwd = getpwnam(username);
-    if(pwd == NULL) {
-        perror("Error getting user information");
+// Funzione per fare una copia profonda di una struttura passwd
+struct passwd *deep_copy_passwd(struct passwd *src) {
+    struct passwd *dst = malloc(sizeof(struct passwd));
+    if (dst == NULL) return NULL;
+
+    *dst = *src;
+
+    // Copiare le stringhe puntate
+    dst->pw_name = strdup(src->pw_name);
+    dst->pw_passwd = strdup(src->pw_passwd);
+    dst->pw_gecos = strdup(src->pw_gecos);
+    dst->pw_dir = strdup(src->pw_dir);
+    dst->pw_shell = strdup(src->pw_shell);
+
+    return dst;
+}
+
+struct passwd **get_all_pwd_records_from_name(char *name, int *total_pwd_records) {
+    struct passwd **all_pwd = NULL;
+    struct passwd *pwd;
+    int total_pwd_entry_found = 0;
+
+    setpwent(); // Riavvia la lettura del file passwd
+
+    // Cerca tutte le corrispondenze nel campo GECOS
+    while ((pwd = getpwent()) != NULL) {
+        if (strstr(pwd->pw_gecos, name) != NULL || strcmp(pwd->pw_name, name) == 0) {
+            total_pwd_entry_found++;
+            all_pwd = realloc(all_pwd, total_pwd_entry_found * sizeof(struct passwd *));
+            if (all_pwd == NULL) {
+                perror("realloc");
+                endpwent();
+                return NULL;
+            }
+            all_pwd[total_pwd_entry_found - 1] = deep_copy_passwd(pwd);
+        }
+    }
+    endpwent();
+
+    if (total_pwd_entry_found == 0) {
+        printf("No user found with name %s\n", name);
+    }
+    *total_pwd_records = total_pwd_entry_found;
+    return all_pwd;
+}
+
+struct passwd *get_pwd_record_by_login_name(char* login_name) {
+    struct passwd *pw = getpwnam(login_name);
+    if(pw == NULL) {
+        perror("COuldn't fine pwd entry");
         exit(0);
     }
-    return pwd;
+    return pw;
 }
 
 // Funzione per dividere la stringa GECOS e inserirla in un array di stringhe
@@ -194,17 +240,18 @@ void print_s_format_single_user(struct utmp utmp_record) {
     long idle_time = calculate_idle_time(tty_path);
 
     char real_name[256];
-    struct passwd *pwd = get_pwd_record(utmp_record.ut_user);
+    struct passwd *pwd = get_pwd_record_by_login_name(utmp_record.ut_user);
     
     char **user_gecos = split_gecos(pwd->pw_gecos);
     
-    printf("%-15s %-15s %-15s %-15s %-15s %-15s", 
+    printf("%-15s %-15s %-15s %-15s %-15s %-15s %-15s", 
         utmp_record.ut_user, 
         user_gecos[0],
         utmp_record.ut_host, 
         time_to_string(idle_time),
         format_login_time(utmp_record.ut_tv.tv_sec),
-        utmp_record.ut_line);
+        user_gecos[1],
+        user_gecos[2]);
     printf("\n");
 
     free_gecos_fields(user_gecos);
@@ -278,8 +325,19 @@ int main(int argc, char *argv[]) {
             }
         }
 
+        for(int i = 0; i < total_users; i++) {
+            int tot = 0;
+            struct passwd **pwd_records = get_all_pwd_records_from_name(users[i], &tot);
+            
+            for(int j = 0; j < tot; j++) {
+                struct passwd *new = pwd_records[j];
+                printf("%s\n", pwd_records[j]->pw_name);
+            }
+            
+        }
+
         if(config[0] == 0) {
-            //TODO
+            
         }
         
         free(config);
