@@ -260,73 +260,75 @@ long calculate_idle_time(const char *tty_name) {
     return (long)difftime(current_time, statbuf.st_atime);
 }
 
-void print_s_format_single_user(struct utmp utmp_record) {
+void print_s_format_single_user(char *login_name, struct passwd *pw_record, struct utmp *utmp_record) {
+    char default_str[] = "*";
     char tty_path[256];
-    snprintf(tty_path, sizeof(tty_path), "/dev/%s", utmp_record.ut_line);
+    long idle_time = 0;
+    char *host = "N/A";
+    char *login_time_str = "N/A";
+    char **user_gecos = split_gecos(pw_record->pw_gecos);
 
-    long idle_time = calculate_idle_time(tty_path);
+    if (utmp_record != NULL) {
+        snprintf(tty_path, sizeof(tty_path), "/dev/%s", utmp_record->ut_line);
+        idle_time = calculate_idle_time(tty_path);
+        host = utmp_record->ut_host;
+        login_time_str = format_login_time(utmp_record->ut_tv.tv_sec);
+    }
 
-    char real_name[256];
-    struct passwd *pwd = get_pwd_record_by_login_name(utmp_record.ut_user);
-    
-    char **user_gecos = split_gecos(pwd->pw_gecos);
-    
-    printf("%-15s %-15s %-15s %-15s %-15s %-15s %-15s", 
-        utmp_record.ut_user, 
-        user_gecos[0],
-        utmp_record.ut_host, 
-        time_to_string(idle_time),
-        format_login_time(utmp_record.ut_tv.tv_sec),
-        user_gecos[1],
-        user_gecos[2]);
-    printf("\n");
+    printf("%-15s %-15s %-15s %-15s %-15s %-15s %-15s\n", 
+        login_name, 
+        user_gecos[0] ? user_gecos[0] : default_str,
+        utmp_record ? host : default_str,
+        idle_time > 0 ? time_to_string(idle_time) : default_str,
+        utmp_record ? login_time_str : default_str,
+        user_gecos[1] ? user_gecos[1] : default_str,
+        user_gecos[2] ? user_gecos[2] : default_str);
 
     free_gecos_fields(user_gecos);
 }
 
-void print_s_format(int *config, int total_users, struct utmp *users) {
+void print_s_format(int *config, int total_logged_users, struct utmp *users, int total_input_users, char** input_login_names) {
     printf("%-15s %-15s %-15s %-15s %-15s %-15s %-15s\n", "Login", "Name",
      "Tty", "Idle", "Login Time", "Office", "Office Phone");
-    for(int i = 0; i < total_users; i++) {
-        print_s_format_single_user(users[i]);
+    if(total_input_users == 0 && total_logged_users > 0) {
+        for(int i = 0; i < total_logged_users; i++) {
+            
+            print_s_format_single_user(users[i].ut_user, get_pwd_record_by_login_name(users[i].ut_user), &users[i]);
+        }
+    } else {
+        //TODO
     }
-}
 
-void l_format(char* config, char** users, int total_users) {
-    if(total_users == 0) {
-
-    }
 }
 
 
 int main(int argc, char *argv[]) {
 
+    int fd_utmp; 
+    int *total_logged_users;
+
+    fd_utmp = open(UTMP_FILE, O_RDONLY);
+
+    struct utmp *logged_users = get_logged_users(fd_utmp, &total_logged_users);
+
+    if(fd_utmp == -1) {
+        perror("Something went wrong:");
+        return 0;
+    }
+
     if (argc <= 1) {
 
-        int fd_utmp, fd_pwd; 
         int config[] = {0, 0, 0};
-
-        fd_utmp = open(UTMP_FILE, O_RDONLY);
-
-        if(fd_utmp == -1) {
-            perror("Something went wrong:");
-            return 0;
-        }
         
-        int total_users = 0;
+        print_s_format(config, total_logged_users, logged_users, 0, NULL);
 
-        struct utmp *users = get_logged_users(fd_utmp, &total_users);
-        
-        print_s_format(config, total_users, users);
-
-        free(users);
-
+        free(logged_users);
 
     } else {
         
         int* config = (int*) calloc(3, sizeof(int));
-        char** users = NULL;
-        int total_users = 0;
+        char** input_users_names = NULL;
+        int input_users = 0;
 
         for(int i = 1; i < argc; i++) {
             if(argv[i][0] == '-') {
@@ -334,41 +336,44 @@ int main(int argc, char *argv[]) {
             }
             else{
                 
-                total_users++;
-                users = (char**)realloc(users, (total_users) * sizeof(char*));
-                if(users == NULL) {
+                input_users++;
+                input_users_names = (char**)realloc(input_users_names, (input_users) * sizeof(char*));
+                if(input_users_names == NULL) {
                     perror("memory allocation failure");
                     exit(0);
                 }
 
-                users[total_users - 1] = (char*) malloc((strlen(argv[i]) + 1) * sizeof(char));
-                if(users[total_users - 1] == NULL) {
+                input_users_names[input_users - 1] = (char*) malloc((strlen(argv[i]) + 1) * sizeof(char));
+                if(input_users_names[input_users - 1] == NULL) {
                     perror("memory allocation failure");
                     exit(1);
                 }
                 
-                strcpy(users[total_users -1], argv[i]);
+                strcpy(input_users_names[input_users -1], argv[i]);
                 
             }
         }
 
-        for(int i = 0; i < total_users; i++) {
-            int tot = 0;
-            struct passwd **pwd_records = get_all_pwd_records_from_name(users[i], &tot);
-            
-            for(int j = 0; j < tot; j++) {
-                struct passwd *new = pwd_records[j];
-                printf("%s\n", pwd_records[j]->pw_name);
+        if(input_users == 0) {
+            switch(config[0]) {
+                case 0: {
+                    print_s_format(config, total_logged_users, logged_users, 0, NULL);
+                    break;
+                }
+
+                case 1: 
             }
-            
         }
 
-        if(config[0] == 0) {
+        for(int i = 0; i < input_users; i++) {
+            int tot = 0;
+            struct passwd **pwd_records = get_all_pwd_records_from_name(input_users_names[i], &tot);
+            
             
         }
         
         free(config);
-        free(users);
+        free(input_users_names);
 
     }
 
