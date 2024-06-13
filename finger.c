@@ -12,6 +12,31 @@
 
 #define MAX_FIELDS 5 // Numero massimo di campi nel campo GECOS
 
+struct utmp *find_utmp_record(const char *login_name) {
+    struct utmp *ut;
+    FILE *utmp_file;
+
+    // Apri il file utmp
+    utmp_file = fopen(_PATH_UTMP, "rb");
+    if (utmp_file == NULL) {
+        perror("Errore nell'apertura del file utmp");
+        return NULL;
+    }
+
+    // Leggi il file utmp alla ricerca del record dell'utente
+    while ((ut = malloc(sizeof(struct utmp))) != NULL && fread(ut, sizeof(struct utmp), 1, utmp_file) == 1) {
+        if (ut->ut_type == USER_PROCESS && strcmp(ut->ut_user, login_name) == 0) {
+            fclose(utmp_file);
+            return ut; // Trovato il record
+        }
+        free(ut);
+    }
+
+    // Se non troviamo il record, chiudiamo il file e restituiamo NULL
+    fclose(utmp_file);
+    return NULL;
+}
+
 char *str_to_lower(const char *str) {
     if (str == NULL) {
         return NULL;
@@ -51,10 +76,10 @@ struct passwd *deep_copy_passwd(struct passwd *src) {
     return dst;
 }
 
-struct passwd **get_all_pwd_records_from_name(char *name, int *total_pwd_records) {
-    struct passwd **all_pwd = NULL;
+char **get_all_login_names_from_name(char *name, int *total_login_names) {
+    char **all_logins = NULL;
     struct passwd *pwd;
-    int total_pwd_entry_found = 0;
+    int total_login_found = 0;
 
     setpwent(); // Riavvia la lettura del file passwd
 
@@ -63,26 +88,36 @@ struct passwd **get_all_pwd_records_from_name(char *name, int *total_pwd_records
     // Cerca tutte le corrispondenze nel campo GECOS
     while ((pwd = getpwent()) != NULL) {
         char *low_gecos = str_to_lower(pwd->pw_gecos);
-        
+
         if (strstr(low_gecos, low_name) != NULL || strcmp(pwd->pw_name, name) == 0) {
-            total_pwd_entry_found++;
-            all_pwd = realloc(all_pwd, total_pwd_entry_found * sizeof(struct passwd *));
-            if (all_pwd == NULL) {
+            total_login_found++;
+            all_logins = realloc(all_logins, total_login_found * sizeof(char *));
+            if (all_logins == NULL) {
                 perror("realloc");
+                free(low_gecos);
                 endpwent();
                 return NULL;
             }
-            all_pwd[total_pwd_entry_found - 1] = deep_copy_passwd(pwd);
+            all_logins[total_login_found - 1] = strdup(pwd->pw_name);
+            if (all_logins[total_login_found - 1] == NULL) {
+                perror("strdup");
+                free(low_gecos);
+                endpwent();
+                return NULL;
+            }
         }
+        free(low_gecos);
     }
     endpwent();
 
-    if (total_pwd_entry_found == 0) {
+    if (total_login_found == 0) {
         printf("No user found with name %s\n", name);
     }
-    *total_pwd_records = total_pwd_entry_found;
-    return all_pwd;
+    *total_login_names = total_login_found;
+    free(low_name);
+    return all_logins;
 }
+
 
 struct passwd *get_pwd_record_by_login_name(char* login_name) {
     struct passwd *pw = getpwnam(login_name);
@@ -160,7 +195,6 @@ struct utmp *get_logged_users(int fd, int *total_users) {
             }
         memcpy(&logged_users[total_logged_users - 1], &utmp_buf, sizeof(struct utmp));
         }
-
    }
 
    *total_users = total_logged_users;
@@ -287,96 +321,157 @@ void print_s_format_single_user(char *login_name, struct passwd *pw_record, stru
     free_gecos_fields(user_gecos);
 }
 
-void print_s_format(int *config, int total_logged_users, struct utmp *users, int total_input_users, char** input_login_names) {
+void print_s_format(int total_logged_users, struct utmp *logged_users, int total_input_users, char** input_users) {
     printf("%-15s %-15s %-15s %-15s %-15s %-15s %-15s\n", "Login", "Name",
      "Tty", "Idle", "Login Time", "Office", "Office Phone");
+    
     if(total_input_users == 0 && total_logged_users > 0) {
-        for(int i = 0; i < total_logged_users; i++) {
-            
-            print_s_format_single_user(users[i].ut_user, get_pwd_record_by_login_name(users[i].ut_user), &users[i]);
+        for(int i = 0; i < total_logged_users; i++) { 
+            print_s_format_single_user(logged_users[i].ut_user, get_pwd_record_by_login_name(logged_users[i].ut_user), &logged_users[i]);
         }
-    } else {
-        //TODO
+    }
+    else{
+        for(int i = 0; i < total_input_users; i++) { 
+            print_s_format_single_user(input_users[i], get_pwd_record_by_login_name(input_users[i]), find_utmp_record(input_users[i]));
+        }
     }
 
+
+
+
+}
+
+
+char** add_str(char** array, int *size, char* new_str) {
+    (*size)++;
+    char** new_array = (char**)realloc(array, (*size) * sizeof(char *));
+
+    if(new_array == NULL) {
+        perror("Memory reallocation failure");
+        exit(0);
+    }
+
+    new_array[*size - 1] = (char*) malloc((strlen(new_str) + 1) * sizeof(char));
+    if(new_array[*size - 1] == NULL) {
+        perror("memory allocation failure");
+        exit(1);
+    }
+    
+    strcpy(new_array[*size -1], new_str);
+
+    return new_array;
+}
+
+void print_finger_output_single_user(const char *login_name, struct passwd *pwd, struct utmp *ut) {
+    if (pwd == NULL || ut == NULL) {
+        fprintf(stderr, "Errore: dati mancanti per l'utente %s\n", login_name);
+        return;
+    }
+
+    // Informazioni di base
+    printf("Login: %s\n", pwd->pw_name);
+    printf("Name: %s\n", pwd->pw_gecos);
+    printf("Directory: %s\n", pwd->pw_dir);
+    printf("Shell: %s\n", pwd->pw_shell);
+
+    // Ultimo login
+    time_t last_login_time = ut->ut_tv.tv_sec;
+    char last_login_str[256];
+    struct tm *tm_info = localtime(&last_login_time);
+    strftime(last_login_str, sizeof(last_login_str), "%a %b %d %H:%M", tm_info);
+    printf("Last login %s on %s from %s\n", last_login_str, ut->ut_line, ut->ut_host);
+
+    // Mail e Plan (simulato, dato che non abbiamo accesso reale)
+    printf("No mail.\n");  // Potresti voler aggiungere una vera verifica della posta qui
+    printf("Plan:\n");     // Potresti voler leggere il file .plan dalla directory home
+
+    // Esci
+    printf("\n");
+}
+
+void print_l_format(int *config, int total_logged_users, struct utmp *logged_users, int total_input_users, char **input_users) {
+    if(total_input_users == 0 && total_logged_users > 0) {
+        for(int i = 0; i < total_logged_users; i++) { 
+            print_finger_output_single_user(logged_users[i].ut_user, get_pwd_record_by_login_name(logged_users[i].ut_user), &logged_users[i]);
+        }
+    }
+    else{
+        for(int i = 0; i < total_input_users; i++) { 
+            print_finger_output_single_user(input_users[i], get_pwd_record_by_login_name(input_users[i]), find_utmp_record(input_users[i]));
+        }
+    }
 }
 
 
 int main(int argc, char *argv[]) {
 
     int fd_utmp; 
-    int *total_logged_users;
+    int total_logged_users = 0;
 
     fd_utmp = open(UTMP_FILE, O_RDONLY);
-
-    struct utmp *logged_users = get_logged_users(fd_utmp, &total_logged_users);
 
     if(fd_utmp == -1) {
         perror("Something went wrong:");
         return 0;
     }
 
-    if (argc <= 1) {
+    struct utmp *logged_users = get_logged_users(fd_utmp, &total_logged_users);
 
-        int config[] = {0, 0, 0};
+    if (argc <= 1) {
         
-        print_s_format(config, total_logged_users, logged_users, 0, NULL);
+        print_s_format(total_logged_users, logged_users, 0, NULL);
 
         free(logged_users);
 
     } else {
         
         int* config = (int*) calloc(3, sizeof(int));
-        char** input_users_names = NULL;
-        int input_users = 0;
+        char** input_names = NULL;
+        int input_names_count = 0;
 
         for(int i = 1; i < argc; i++) {
             if(argv[i][0] == '-') {
                 change_config(config, argv[i]);
             }
             else{
-                
-                input_users++;
-                input_users_names = (char**)realloc(input_users_names, (input_users) * sizeof(char*));
-                if(input_users_names == NULL) {
-                    perror("memory allocation failure");
-                    exit(0);
-                }
+                input_names = add_str(input_names, &input_names_count, argv[i]);
+            }
+        }
 
-                input_users_names[input_users - 1] = (char*) malloc((strlen(argv[i]) + 1) * sizeof(char));
-                if(input_users_names[input_users - 1] == NULL) {
-                    perror("memory allocation failure");
-                    exit(1);
-                }
+        char **input_users_login_names = NULL;
+        int total_input_users_login_names = 0;
+
+        if(input_names_count != 0) {
+            for(int i = 0; i < input_names_count; i++) {
+                int tot = 0;
+                char **all_login_names = get_all_login_names_from_name(input_names[i], &tot);
                 
-                strcpy(input_users_names[input_users -1], argv[i]);
+                for(int i = 0; i < tot; i++) {
+                    input_users_login_names = add_str(input_users_login_names, &total_input_users_login_names, all_login_names[i]);
+                }
                 
             }
         }
 
-        if(input_users == 0) {
-            switch(config[0]) {
-                case 0: {
-                    print_s_format(config, total_logged_users, logged_users, 0, NULL);
-                    break;
-                }
-
-                case 1: 
+        switch(config[0]) {
+            case 0: {
+                print_s_format(total_logged_users, logged_users, total_input_users_login_names, input_users_login_names);
+                break;
             }
-        }
 
-        for(int i = 0; i < input_users; i++) {
-            int tot = 0;
-            struct passwd **pwd_records = get_all_pwd_records_from_name(input_users_names[i], &tot);
-            
-            
+            case 1: {
+                print_l_format(config, total_logged_users, logged_users, total_input_users_login_names, input_users_login_names);
+                break;
+            }
         }
         
+
         free(config);
-        free(input_users_names);
+        free(input_names);
 
     }
 
+    close(fd_utmp);
     return 0;
 
 }
