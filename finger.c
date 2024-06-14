@@ -87,7 +87,6 @@ FILE* find_and_open_file(const char *filename, const char *directory) {
     // Apri la directory
     dir = opendir(directory);
     if (dir == NULL) {
-        perror("Error opening directory");
         return NULL;
     }
 
@@ -234,7 +233,7 @@ struct passwd *get_pwd_record_by_login_name(char* login_name) {
 }
 
 // Funzione per dividere la stringa GECOS e inserirla in un array di stringhe
-char** split_gecos(const char *gecos) {
+char** split_gecos(char *gecos) {
     char *gecos_copy = strdup(gecos);
     if (gecos_copy == NULL) {
         perror("Memory allocation failure");
@@ -274,6 +273,7 @@ char** split_gecos(const char *gecos) {
     free(gecos_copy);
     return fields;
 }
+
 
 // Funzione per liberare l'array di stringhe
 void free_gecos_fields(char **fields) {
@@ -471,14 +471,23 @@ void print_finger_output_single_user(int p, char *login_name, struct passwd *pwd
 
     char **user_gecos = split_gecos(pwd->pw_gecos);
     
-    printf("Name: %s\n", user_gecos[0]);
-    printf("Office: %s, %s\n", user_gecos[1], format_phone_number(user_gecos[2]));
-    printf("Home Phone: %s\n", format_phone_number(user_gecos[3]));
+    printf("Name: %s\n", user_gecos[0] ? user_gecos[0] : "" );
+    printf("Office: ");
+    if(user_gecos[1] != NULL) {
+        printf("%s", user_gecos[1]);
+    }
+    if(user_gecos[2] != NULL) {
+        printf(", %s\n", format_phone_number(user_gecos[2]));
+    }
+    if(user_gecos[3] != NULL) {
+        printf("Home Phone: %s\n", format_phone_number(user_gecos[3]));
+    }
+    
     printf("Directory: %s\n", pwd->pw_dir);
     printf("Shell: %s\n", pwd->pw_shell);
 
     if(ut == NULL) {
-        printf("Never logged in. /n");
+        printf("Never logged in. \n");
     } else {
         // Ultimo login
         time_t last_login_time = ut->ut_tv.tv_sec;
@@ -574,17 +583,23 @@ int main(int argc, char *argv[]) {
         char **input_users_login_names = NULL;
         int total_input_users_login_names = 0;
 
-        if(input_names_count != 0) {
-            for(int i = 0; i < input_names_count; i++) {
-                int tot = 0;
-                char **all_login_names = get_all_login_names_from_name(input_names[i], &tot);
-                
-                for(int i = 0; i < tot; i++) {
-                    input_users_login_names = add_str(input_users_login_names, &total_input_users_login_names, all_login_names[i]);
+        if(config[1] == 0) {
+            if(input_names_count != 0) {
+                for(int i = 0; i < input_names_count; i++) {
+                    int tot = 0;
+                    char **all_login_names = get_all_login_names_from_name(input_names[i], &tot);
+                    
+                    for(int i = 0; i < tot; i++) {
+                        input_users_login_names = add_str(input_users_login_names, &total_input_users_login_names, all_login_names[i]);
+                    }
+                    
                 }
-                
             }
+        } else {
+            input_users_login_names = input_names;
+            total_input_users_login_names = input_names_count;
         }
+        
 
         if(config[0] == 1 || (config[0] == 0 && config[2] == 0)) {
             print_l_format(config[3], total_logged_users, logged_users, total_input_users_login_names, input_users_login_names);
