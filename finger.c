@@ -7,10 +7,115 @@
 #include <utmp.h>
 #include <time.h>
 #include <sys/stat.h>
+#include <dirent.h>
 #include <string.h>
 #include <ctype.h>
 
 #define MAX_FIELDS 5 // Numero massimo di campi nel campo GECOS
+
+char *format_phone_number(char *unformatted_number) {
+  static char formatted_number[16]; // Buffer to store formatted number
+  int len = 0, i;
+
+  // Check if all characters are digits
+  while (unformatted_number[len] != '\0') {
+    if (!isdigit(unformatted_number[len])) {
+      return unformatted_number; // Not a valid phone number (contains non-digits)
+    }
+    len++;
+  }
+
+  // Format based on length
+  switch (len) {
+    case 11:
+      snprintf(formatted_number, sizeof(formatted_number), "+%c-%c%c%c-%c%c%c-%c%c%c%c",
+               unformatted_number[0], unformatted_number[1], unformatted_number[2],
+               unformatted_number[3], unformatted_number[4], unformatted_number[5],
+               unformatted_number[6], unformatted_number[7], unformatted_number[8],
+               unformatted_number[9], unformatted_number[10]);
+      break;
+    case 10:       
+        snprintf(formatted_number, sizeof(formatted_number), "%c%c%c-%c%c%c-%c%c%c%c",
+               unformatted_number[0], unformatted_number[1], unformatted_number[2],
+               unformatted_number[3], unformatted_number[4], unformatted_number[5],
+               unformatted_number[6], unformatted_number[7], unformatted_number[8],
+               unformatted_number[9]);
+      break;
+    case 7:
+        snprintf(formatted_number, sizeof(formatted_number), "%c%c%c-%c%c%c%c",
+               unformatted_number[0], unformatted_number[1], unformatted_number[2],
+               unformatted_number[3], unformatted_number[4], unformatted_number[5],
+               unformatted_number[6]);
+      break;
+    case 5:
+      snprintf(formatted_number, sizeof(formatted_number), "x%c-%c%c%c%c",
+               unformatted_number[0], unformatted_number[1], unformatted_number[2],
+               unformatted_number[3], unformatted_number[4]);
+      break;
+    case 4:
+      snprintf(formatted_number, sizeof(formatted_number), "x%c%c%c%c",
+               unformatted_number[0], unformatted_number[1], unformatted_number[2],
+               unformatted_number[3]);
+      break;
+    default:
+      return unformatted_number; // Not a valid phone number (invalid length)
+  }
+
+  return formatted_number;
+}
+
+void print_file_content(FILE *file) {
+    if (file == NULL) {
+        perror("Error opening file");
+        return;
+    }
+
+    char line[256];
+    while (fgets(line, sizeof(line), file)) {
+        printf("%s", line);
+    }
+
+    fclose(file);
+}
+
+FILE* find_and_open_file(const char *filename, const char *directory) {
+    DIR *dir;
+    struct dirent *entry;
+    struct stat filestat;
+    char filepath[1024];
+
+    // Apri la directory
+    dir = opendir(directory);
+    if (dir == NULL) {
+        perror("Error opening directory");
+        return NULL;
+    }
+
+    // Leggi le voci della directory
+    while ((entry = readdir(dir)) != NULL) {
+        // Costruisci il percorso completo del file
+        snprintf(filepath, sizeof(filepath), "%s/%s", directory, entry->d_name);
+
+        // Verifica se è un file regolare e se il nome corrisponde
+        if (stat(filepath, &filestat) == 0 && S_ISREG(filestat.st_mode) && strcmp(entry->d_name, filename) == 0) {
+            // Chiudi la directory
+            closedir(dir);
+
+            // Apri e restituisci il file
+            FILE *file = fopen(filepath, "r");
+            if (file == NULL) {
+                perror("Error opening file");
+            }
+            return file;
+        }
+    }
+
+    // Chiudi la directory
+    closedir(dir);
+
+    // File non trovato
+    return NULL;
+}
 
 struct utmp *find_utmp_record(const char *login_name) {
     struct utmp *ut;
@@ -207,15 +312,12 @@ void change_config(int* config, char* string) {
         switch(string[j]) {
             case 'l': config[0] = 1; break;
             case 'm': config[1] = 1; break;
-            case 's': config[0] = 0; break;
-            case 'p': config[2] = 1; break;
+            case 's': config[2] = 1; break;
+            case 'p': config[3] = 1; break;
             default: printf("Invalid Option"); exit(EXIT_FAILURE);
         }
     }
 
-    if(config[0] == 1) {
-        config[2] = 0;
-    }
 }
 
 char* get_user_gecos(const char *username, char *gecos_info, size_t len) {
@@ -336,11 +438,7 @@ void print_s_format(int total_logged_users, struct utmp *logged_users, int total
         }
     }
 
-
-
-
 }
-
 
 char** add_str(char** array, int *size, char* new_str) {
     (*size)++;
@@ -362,42 +460,77 @@ char** add_str(char** array, int *size, char* new_str) {
     return new_array;
 }
 
-void print_finger_output_single_user(const char *login_name, struct passwd *pwd, struct utmp *ut) {
-    if (pwd == NULL || ut == NULL) {
+void print_finger_output_single_user(int p, char *login_name, struct passwd *pwd, struct utmp *ut) {
+    if (pwd == NULL) {
         fprintf(stderr, "Errore: dati mancanti per l'utente %s\n", login_name);
         return;
     }
 
     // Informazioni di base
     printf("Login: %s\n", pwd->pw_name);
-    printf("Name: %s\n", pwd->pw_gecos);
+
+    char **user_gecos = split_gecos(pwd->pw_gecos);
+    
+    printf("Name: %s\n", user_gecos[0]);
+    printf("Office: %s, %s\n", user_gecos[1], format_phone_number(user_gecos[2]));
+    printf("Home Phone: %s\n", format_phone_number(user_gecos[3]));
     printf("Directory: %s\n", pwd->pw_dir);
     printf("Shell: %s\n", pwd->pw_shell);
 
-    // Ultimo login
-    time_t last_login_time = ut->ut_tv.tv_sec;
-    char last_login_str[256];
-    struct tm *tm_info = localtime(&last_login_time);
-    strftime(last_login_str, sizeof(last_login_str), "%a %b %d %H:%M", tm_info);
-    printf("Last login %s on %s from %s\n", last_login_str, ut->ut_line, ut->ut_host);
+    if(ut == NULL) {
+        printf("Never logged in. /n");
+    } else {
+        // Ultimo login
+        time_t last_login_time = ut->ut_tv.tv_sec;
+        char last_login_str[256];
+        struct tm *tm_info = localtime(&last_login_time);
+        strftime(last_login_str, sizeof(last_login_str), "%a %b %d %H:%M", tm_info);
+        printf("Last login %s on %s from %s\n", last_login_str, ut->ut_line, ut->ut_host);
+    }
 
     // Mail e Plan (simulato, dato che non abbiamo accesso reale)
     printf("No mail.\n");  // Potresti voler aggiungere una vera verifica della posta qui
-    printf("Plan:\n");     // Potresti voler leggere il file .plan dalla directory home
+
+    if(p == 1) {
+        return;
+    } 
+
+    FILE *plan = find_and_open_file(".plan", pwd->pw_dir);
+    FILE *project = find_and_open_file(".project", pwd->pw_dir); 
+    FILE *pgpkey = find_and_open_file(".pgpkey", pwd->pw_dir);
+
+    if(pgpkey != NULL) {
+        printf("PGP key:\n");
+        print_file_content(pgpkey);
+    }
+
+    if(project != NULL) {
+        printf("Project:\n");
+        print_file_content(project);
+    }
+
+    if(plan != NULL) {
+            printf("Plan:\n"); 
+            print_file_content(plan); // Potresti voler leggere il file .plan dalla directory home
+    }
+    else {
+        printf("No plan.");
+    }
+
 
     // Esci
     printf("\n");
 }
 
-void print_l_format(int *config, int total_logged_users, struct utmp *logged_users, int total_input_users, char **input_users) {
+void print_l_format(int p, int total_logged_users, struct utmp *logged_users, int total_input_users, char **input_users) {
     if(total_input_users == 0 && total_logged_users > 0) {
         for(int i = 0; i < total_logged_users; i++) { 
-            print_finger_output_single_user(logged_users[i].ut_user, get_pwd_record_by_login_name(logged_users[i].ut_user), &logged_users[i]);
+            print_finger_output_single_user(p, logged_users[i].ut_user, get_pwd_record_by_login_name(logged_users[i].ut_user), &logged_users[i]);
         }
     }
     else{
         for(int i = 0; i < total_input_users; i++) { 
-            print_finger_output_single_user(input_users[i], get_pwd_record_by_login_name(input_users[i]), find_utmp_record(input_users[i]));
+            print_finger_output_single_user(p, input_users[i], get_pwd_record_by_login_name(input_users[i]), find_utmp_record(input_users[i]));
         }
     }
 }
@@ -425,7 +558,7 @@ int main(int argc, char *argv[]) {
 
     } else {
         
-        int* config = (int*) calloc(3, sizeof(int));
+        int* config = (int*) calloc(4, sizeof(int));
         char** input_names = NULL;
         int input_names_count = 0;
 
@@ -453,18 +586,12 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        switch(config[0]) {
-            case 0: {
-                print_s_format(total_logged_users, logged_users, total_input_users_login_names, input_users_login_names);
-                break;
-            }
-
-            case 1: {
-                print_l_format(config, total_logged_users, logged_users, total_input_users_login_names, input_users_login_names);
-                break;
-            }
+        if(config[0] == 1 || (config[0] == 0 && config[2] == 0)) {
+            print_l_format(config[3], total_logged_users, logged_users, total_input_users_login_names, input_users_login_names);
         }
-        
+        else {
+            print_s_format(total_logged_users, logged_users, total_input_users_login_names, input_users_login_names);
+        }
 
         free(config);
         free(input_names);
