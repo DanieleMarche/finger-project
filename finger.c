@@ -3,87 +3,49 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>
-#include <pwd.h>
-#include <utmp.h>
-#include <time.h>
 #include <sys/stat.h>
 #include <dirent.h>
 #include <string.h>
 #include <ctype.h>
+#include "finger.h"
 
-struct user {
-    char *login_name; 
-    struct passwd *pw;
-    struct utmp *utmps;
-    int utmp_records;
-};
+////////////////////////////////////////////////////////////////////////////////////////////
 
-void print_mail_status(const char *username) {
-    char filepath[256];
-    snprintf(filepath, sizeof(filepath), "/var/mail/%s", username);
+//Funzione per la gestione delle opzioni: 
 
-    FILE *mail_file = fopen(filepath, "r");
-    if (mail_file == NULL) {
-        printf("No mail.\n");
-        return;
-    }
-
-    struct stat file_stat;
-    if (stat(filepath, &file_stat) == -1) {
-        perror("stat");
-        fclose(mail_file);
-        return;
-    }
-
-    if (file_stat.st_size == 0) {
-        printf("No Mail.\n");
-        fclose(mail_file);
-        return;
-    }
-
-    time_t last_access = file_stat.st_atime;
-    time_t last_modification = file_stat.st_mtime;
-
-    char buffer[1024];
-    int new_mail = 0;
-    while (fgets(buffer, sizeof(buffer), mail_file)) {
-        if (strncmp(buffer, "From ", 5) == 0) {
-            new_mail = 1;
-            break;
+//Changes the config array witch the options passed as input
+void change_config(int* config, char* string) {
+    int a = strlen(string);
+    for(int j = 1; j < a; j++){
+        switch(string[j]) {
+            case 'l': config[0] = 1; break;
+            case 'm': config[1] = 1; break;
+            case 's': config[2] = 1; break;
+            case 'p': config[3] = 1; break;
+            default: printf("Invalid Option : %c", string[j]); 
+            exit(EXIT_FAILURE);
         }
     }
 
-    if (new_mail) {
-        if (last_access >= last_modification) {
-            char last_read_time[64];
-            strftime(last_read_time, sizeof(last_read_time), "%a %b %d %H:%M:%S %Y (%Z)", localtime(&last_access));
-            printf("Mail last read %s\n", last_read_time);
-        } else {
-            char last_received_time[64];
-            strftime(last_received_time, sizeof(last_received_time), "%a %b %d %H:%M:%S %Y (%Z)", localtime(&last_modification));
-            printf("New mail received %s\n", last_received_time);
-            printf("Unread since %s\n", last_received_time);
-        }
-    } else {
-        printf("No Mail.\n");
-    }
-
-    fclose(mail_file);
 }
+
+////////////////////////////////////////////////////////////////////////////////////////////
+
+//Funzionni di utils per la manipolazione dei dati:
 
 char *format_phone_number(char *unformatted_number) {
   static char formatted_number[16]; // Buffer to store formatted number
   int len = 0, i;
 
-  // Check if all characters are digits
+  //Controlla che tutti i caratteri all'interno della stringa siano numeri
   while (unformatted_number[len] != '\0') {
     if (!isdigit(unformatted_number[len])) {
-      return unformatted_number; // Not a valid phone number (contains non-digits)
+      return unformatted_number; //Non contiene tutti numeri, ritorna la stringa
     }
     len++;
   }
 
-  // Format based on length
+  //Formatta il numero in base alla sua lunghezza
   switch (len) {
     case 11:
       snprintf(formatted_number, sizeof(formatted_number), "+%c-%c%c%c-%c%c%c-%c%c%c%c",
@@ -116,28 +78,12 @@ char *format_phone_number(char *unformatted_number) {
                unformatted_number[3]);
       break;
     default:
-      return unformatted_number; // Not a valid phone number (invalid length)
+      return unformatted_number; //Il numero non ha una lunghezza valida
   }
 
   return formatted_number;
 }
 
-void print_file_content(FILE *file) {
-    if (file == NULL) {
-        perror("Error opening file");
-        return;
-    }
-
-    char line[256];
-    while (fgets(line, sizeof(line), file)) {
-        printf("%s", line);
-    }
-
-    fclose(file);
-}
-
-//If the file with the filename passed in input is found inside the dir passed, the
-// function opens the file and return its FILE is returned, otherwise NULL is returned
 FILE* find_and_open_file(const char *filename, const char *directory) {
     DIR *dir;
     struct dirent *entry;
@@ -299,7 +245,7 @@ char** split_gecos(char *gecos) {
 }
 
 
-// Funzione per liberare l'array di stringhe
+// Funzione per liberare la memoria occupata dall'array di stringhe GECOS.
 void free_gecos_fields(char **fields) {
     for (int i = 0; i < 5; i++) {
         if (fields[i] != NULL) {
@@ -309,34 +255,149 @@ void free_gecos_fields(char **fields) {
     free(fields);
 }
 
+struct passwd *deep_copy_passwd(struct passwd *passwd) {
+    if (!passwd) return NULL;
+
+    //Alloca memoria per la deep copy
+    struct passwd *new_passwd = malloc(sizeof(struct passwd));
+    if (!new_passwd) return NULL;
+
+    
+    new_passwd->pw_uid = passwd->pw_uid;
+    new_passwd->pw_gid = passwd->pw_gid;
+
+    //Effettua un deep copy di tutti i dati necezsari
+    new_passwd->pw_name = strdup(passwd->pw_name);
+    new_passwd->pw_gecos = strdup(passwd->pw_gecos);
+    new_passwd->pw_dir = strdup(passwd->pw_dir);
+    new_passwd->pw_shell = strdup(passwd->pw_shell);
+
+    return new_passwd;
+}
+
+char* format_login_time(time_t login_time) {
+
+    time_t now;
+    time(&now);
+
+    double diff = difftime(now, login_time); 
+
+    if (diff > 365 * 24 * 3600) {
+         struct tm* time_info = localtime(&login_time);
+        
+        // Allcoa la memoria per la sringa di output
+        char* time_string = (char*)malloc(5);  // 4 caratteri per l'anno + carattere nullo
+        
+        // Format the year string
+        strftime(time_string, 5, "%Y", time_info);
+        
+        return time_string;
+    }
+
+    // Alloca memoria per la stringa di output
+    char *time_string = (char*) malloc(18);  // 17 caratteri per "Mese GG hh:mm" + carattere nullo
+    if (!time_string) {
+        return NULL;  // Gestisce gli errori per l'allocazione di memoria
+    }
+
+    // converte il tempo in una struct tm
+    struct tm time_info;
+    localtime_r(&login_time, &time_info);
+
+    // formatta la stringa
+    strftime(time_string, 18, "%b %d %H:%M", &time_info);
+
+    return time_string;  // Ritorna la stringa formmattata
+}
+
+char* time_to_string(time_t time_value) {
+  // Allocate memory for the output string
+  char* time_string = (char*) malloc(6);  // 5 characters for "hh:mm" + null terminator
+  if (!time_string) {
+    return NULL;  // Handle memory allocation error
+  }
+  // Convert time to tm structure
+  struct tm time_info;
+  localtime_r(&time_value, &time_info);
+
+  // Format the time string
+  snprintf(time_string, 6, "%02d:%02d", time_info.tm_hour, time_info.tm_min);
+
+  return time_string;  // Return the formatted time string
+}
+
+long calculate_idle_time(const char *tty_name) {
+    struct stat statbuf;
+    time_t current_time;
+    
+    if (stat(tty_name, &statbuf) == -1) {
+        perror("stat");
+        return -1;
+    }
+    
+    time(&current_time);
+    return (long)difftime(current_time, statbuf.st_atime);
+}
+
+char** add_str(char** array, int *size, char* new_str) {
+    (*size)++;
+    char** new_array = (char**)realloc(array, (*size) * sizeof(char *));
+
+    if(new_array == NULL) {
+        perror("Memory reallocation failure");
+        exit(0);
+    }
+
+    new_array[*size - 1] = (char*) malloc((strlen(new_str) + 1) * sizeof(char));
+    if(new_array[*size - 1] == NULL) {
+        perror("memory allocation failure");
+        exit(1);
+    }
+    
+    strcpy(new_array[*size -1], new_str);
+
+    return new_array;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////
+
+//Funzioni per la gestione degli struct user: 
+
 struct user *find_user(struct user *users, int total_users, char *name) {
+
+    //Itera per ogni utente all'interno dell'array
     for (int i = 0; i < total_users; i++) {
         if (strcmp(users[i].login_name, name) == 0) {
-            return &users[i];
+            return &users[i]; // Ritorna l'utente con login name uguale alla stringa passata come parametro
         }
     }
-    return NULL;
+    return NULL;  // se non trova niente ritorna null
 }
 
 void add_utmp_record_to_user(struct user *user_record, struct utmp *utmp) {
+
+    //Aggiorna il contatore
     user_record->utmp_records++;
+
+    //Realloca spazio per l'array di struct utmp
     user_record->utmps = (struct utmp *) realloc(user_record->utmps, user_record->utmp_records * sizeof(struct utmp));
     if (user_record->utmps == NULL) {
-        perror("Error reallocating memory for utmps");
+        perror("Error reallocating memory for utmps"); // Gestisce errori di realloc
         exit(EXIT_FAILURE);
     }
+
+    //Copia l'utmp record nell'array
     memcpy(&user_record->utmps[user_record->utmp_records - 1], &utmp, sizeof(struct utmp));
 }
 
-
 struct user *add_user(struct user *users, int *total_users, char *login_name, struct utmp *utmp) {
+
+    //Controlla se esiste già quell'utente al'interno dell'array
     struct user *temp = find_user(users, *total_users, login_name);
     if(temp != NULL) {
-        if(utmp != NULL){
-            add_utmp_record_to_user(temp, utmp);
-        }
-        return users;
+        return users; // se l'utente già è presente ritorna l'user trovato
     }
+
     // Incrementa il numero di utenti
     (*total_users)++;
 
@@ -369,18 +430,12 @@ struct user *add_user(struct user *users, int *total_users, char *login_name, st
         users[*total_users - 1].utmp_records = 0;
     }
 
-    // Ottieni il record passwd per l'utente
-    struct passwd *pw = get_pwd_record_by_login_name(login_name);
-    if (pw == NULL) {
-        perror("Error getting passwd record");
-        exit(EXIT_FAILURE);
-    }
-    users[*total_users - 1].pw = pw;
+    users[*total_users - 1].pw = deep_copy_passwd(get_pwd_record_by_login_name(login_name));
 
     return users;
 }
 
-//The list of users is expanded and the last indx points to the user passed.
+
 struct user *add_existing_user(int *total_users, struct user *users, struct user u) {
     struct user *temp = find_user(users, *total_users, u.login_name);
     if(temp != NULL) {
@@ -402,20 +457,23 @@ struct user *add_existing_user(int *total_users, struct user *users, struct user
     return users;
 }
 
-
-//Returns a list of all logged users in the system.
 struct user *get_logged_users(int fd, int *total_users) {
     struct user* users = NULL;
     struct utmp utmpbuf;
 
+    //legge tutte le entry del file utmp
     while (read(fd, &utmpbuf, sizeof(utmpbuf)) == sizeof(utmpbuf)) {
+
+        // controlla se la entry è di un utente
         if (utmpbuf.ut_type == USER_PROCESS) {
 
-            // Find the corresponding user or add if not exists
+            // Controlla se l'user è già esiste nella lista
             struct user *user_record = find_user(users, *total_users, utmpbuf.ut_user);
             if (user_record == NULL) {
                 users = add_user(users, total_users, utmpbuf.ut_user, &utmpbuf);
             } else {
+
+                //se l'user già esiste aggiunge il nuovo entry utmp allo struct dell'utente
                 add_utmp_record_to_user(user_record, &utmpbuf);
             }
         }
@@ -423,95 +481,96 @@ struct user *get_logged_users(int fd, int *total_users) {
     return users;
 }
 
-//Changes the config array witch the options passed as input
-void change_config(int* config, char* string) {
-    int a = strlen(string);
-    for(int j = 1; j < a; j++){
-        switch(string[j]) {
-            case 'l': config[0] = 1; break;
-            case 'm': config[1] = 1; break;
-            case 's': config[2] = 1; break;
-            case 'p': config[3] = 1; break;
-            default: printf("Invalid Option : %c", string[j]); 
-            exit(EXIT_FAILURE);
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+//Funzioni per stampare le informazioni degli utenti:
+
+
+void print_mail_status(const char *username) {
+    char filepath[256];
+    snprintf(filepath, sizeof(filepath), "/var/mail/%s", username);
+
+    //Apre il file mail dell'utente
+    FILE *mail_file = fopen(filepath, "r");
+    if (mail_file == NULL) {
+        printf("No mail.\n");  //Se il file non esisite, stampa "no mail"
+        return;
+    }
+
+    // ottiene lo stat del file 
+    struct stat file_stat;
+    if (stat(filepath, &file_stat) == -1) {
+        perror("stat");  // gestisce eventuali errori
+        fclose(mail_file);
+        return;
+    }
+
+    // se il file è vuoto stampa "no mail"
+    if (file_stat.st_size == 0) {
+        printf("No Mail.\n");
+        fclose(mail_file);
+        return;
+    }
+
+    time_t last_access = file_stat.st_atime;
+    time_t last_modification = file_stat.st_mtime;
+
+    // controlla il numero di mail
+    char buffer[1024];
+    int new_mail = 0;
+    while (fgets(buffer, sizeof(buffer), mail_file)) {
+        if (strncmp(buffer, "From ", 5) == 0) {
+            new_mail = 1;
+            break;
         }
     }
 
-}
 
-char* format_login_time(time_t login_time) {
+    if (new_mail) {
 
-    time_t now;
-    time(&now);
-
-    double diff = difftime(now, login_time); 
-
-    if (diff > 365 * 24 * 3600) {
-         struct tm* time_info = localtime(&login_time);
-        
-        // Allocate memory for the output string
-        char* time_string = (char*)malloc(5);  // 4 characters for the year + null terminator
-        
-        // Format the year string
-        strftime(time_string, 5, "%Y", time_info);
-        
-        return time_string;
+        //controlla quando sono arrivate
+        if (last_access >= last_modification) {
+            char last_read_time[64];
+            strftime(last_read_time, sizeof(last_read_time), "%a %b %d %H:%M:%S %Y (%Z)", localtime(&last_access));
+            printf("Mail last read %s\n", last_read_time);
+        } else {
+            char last_received_time[64];
+            strftime(last_received_time, sizeof(last_received_time), "%a %b %d %H:%M:%S %Y (%Z)", localtime(&last_modification));
+            printf("New mail received %s\n", last_received_time);
+            printf("Unread since %s\n", last_received_time);
+        }
+    } else {
+        printf("No Mail.\n"); // se non ci sono mail stampa "no mail"
     }
 
-    // Allocate memory for the output string
-    char *time_string = (char*) malloc(18);  // 17 characters for "Mese GG hh:mm" + null terminator
-    if (!time_string) {
-        return NULL;  // Handle memory allocation error
-    }
-
-    // Convert time to tm structure
-    struct tm time_info;
-    localtime_r(&login_time, &time_info);
-
-    // Format the time string
-    strftime(time_string, 18, "%b %d %H:%M", &time_info);
-
-    return time_string;  // Return the formatted time string
+    fclose(mail_file);
 }
 
+void print_file_content(FILE *file) {
 
-char* time_to_string(time_t time_value) {
-  // Allocate memory for the output string
-  char* time_string = (char*) malloc(6);  // 5 characters for "hh:mm" + null terminator
-  if (!time_string) {
-    return NULL;  // Handle memory allocation error
-  }
-  // Convert time to tm structure
-  struct tm time_info;
-  localtime_r(&time_value, &time_info);
-
-  // Format the time string
-  snprintf(time_string, 6, "%02d:%02d", time_info.tm_hour, time_info.tm_min);
-
-  return time_string;  // Return the formatted time string
-}
-
-long calculate_idle_time(const char *tty_name) {
-    struct stat statbuf;
-    time_t current_time;
-    
-    if (stat(tty_name, &statbuf) == -1) {
-        perror("stat");
-        return -1;
+    if (file == NULL) {
+        perror("Error opening file");
+        return;
     }
-    
-    time(&current_time);
-    return (long)difftime(current_time, statbuf.st_atime);
+
+    char line[256];
+    while (fgets(line, sizeof(line), file)) {
+        printf("%s", line);
+    }
+
+    fclose(file);
 }
 
 void print_s_format_single_user(struct user u) {
     struct utmp *utmp = NULL;
     struct passwd *pw = u.pw;
 
+    // se ci sono più utmp record stampa solo il primo
     if(u.utmp_records > 0) {
         utmp = &u.utmps[0];
     }
 
+    // dati di default in caso non sia presente il record
     char default_str[] = "*";
     char tty_path[256];
     long idle_time = 0;
@@ -519,6 +578,7 @@ void print_s_format_single_user(struct user u) {
     char *login_time_str = "N/A";
     char **user_gecos = split_gecos(pw->pw_gecos);
 
+    //aggiornamento dei dati in caso sia presente 
     if (utmp != NULL) {
         snprintf(tty_path, sizeof(tty_path), "/dev/%s", utmp->ut_line);
         idle_time = calculate_idle_time(tty_path);
@@ -526,6 +586,7 @@ void print_s_format_single_user(struct user u) {
         login_time_str = format_login_time(utmp->ut_tv.tv_sec);
     }
 
+    //stampa i dati
     printf("%-15s %-15s %-15s %-15s %-15s %-15s %-15s\n", 
         u.login_name, 
         user_gecos[0] ? user_gecos[0] : default_str,
@@ -538,34 +599,14 @@ void print_s_format_single_user(struct user u) {
     free_gecos_fields(user_gecos);
 }
 
-void print_short_format(int total_logged_users, struct user *users) {
+void print_short_format(int users_count, struct user *users) {
+
     printf("%-15s %-15s %-15s %-15s %-15s %-15s %-15s\n", "Login", "Name",
      "Tty", "Idle", "Login Time", "Office", "Office Phone");
 
-    for(int i = 0; i < total_logged_users; i++) { 
+    for(int i = 0; i < users_count; i++) { 
         print_s_format_single_user(users[i]);
     }
-
-}
-
-char** add_str(char** array, int *size, char* new_str) {
-    (*size)++;
-    char** new_array = (char**)realloc(array, (*size) * sizeof(char *));
-
-    if(new_array == NULL) {
-        perror("Memory reallocation failure");
-        exit(0);
-    }
-
-    new_array[*size - 1] = (char*) malloc((strlen(new_str) + 1) * sizeof(char));
-    if(new_array[*size - 1] == NULL) {
-        perror("memory allocation failure");
-        exit(1);
-    }
-    
-    strcpy(new_array[*size -1], new_str);
-
-    return new_array;
 }
 
 void print_plan(char* home_dir) {
@@ -605,7 +646,7 @@ void print_device_information(struct user *user) {
             printf("Last login %s on %s from %s\n", last_login_str, utmps[i].ut_line, utmps[i].ut_host);
         
     }
-    printf("Never logged in.");
+    printf("Never logged in.\n");
 }
 
 void print_long_format_single_user(int p, struct user *usr) {
@@ -618,7 +659,11 @@ void print_long_format_single_user(int p, struct user *usr) {
     char **user_gecos = split_gecos(pwd->pw_gecos);
     
     printf("Name: %s\n", user_gecos[0] ? user_gecos[0] : "" );
-    printf("Office: ");
+
+    if(user_gecos[1] != NULL || user_gecos[2] != NULL){
+        printf("Office:"); 
+    }
+    
     if(user_gecos[1] != NULL) {
         printf("%s", user_gecos[1]);
     }
@@ -660,38 +705,45 @@ void print_l_format(int p, int total_users, struct user *users) {
     
 }
 
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+//Main
+
 int main(int argc, char *argv[]) {
 
     int fd_utmp; 
     int logged_users_count = 0;
 
+    // apertura file utmp
     fd_utmp = open(UTMP_FILE, O_RDONLY);
 
     if(fd_utmp == -1) {
-        perror("Something went wrong:");
+        perror("Something went wrong:"); //gestione errori
         return 0;
     }
 
-    struct user *logged_users = NULL;
-
-    logged_users = get_logged_users(fd_utmp, &logged_users_count);
+    // si ottengono gli struct user degli utenti loggati
+    struct user *logged_users = get_logged_users(fd_utmp, &logged_users_count);
 
     close(fd_utmp);
 
     
     if (argc <= 1) {
         
-        //No argument is passed, so all logged users are displayed.
+        //Nessun argomento viene passato, quindi si stampano le informazioni riguardo gli utenti
+        //loggati in formato short
         print_short_format(logged_users_count, logged_users);
-
-        free(logged_users);
 
     } else {
         
-        int* config = (int*) calloc(4, sizeof(int));
+        //iniziallizzazione array di config e di nomi di input
+        int config[4] = {0, 0, 0, 0};
         char** input_names = NULL;
         int input_names_count = 0;
 
+
+        //Si ottengono i nomi e le opzioni passati come argomenti
         for(int i = 1; i < argc; i++) {
             if(argv[i][0] == '-' && strlen(argv[i]) > 1) {
                 change_config(config, argv[i]);
@@ -701,13 +753,14 @@ int main(int argc, char *argv[]) {
             }
         }
 
+        //definizione dell'array struct user degli utenti passati in input
         struct user *input_users = NULL;
         int input_users_count = 0;
        
         if(input_names_count != 0) {
             for(int i = 0; i < input_names_count; i++) {
 
-                //Adds to the input users also the users with the name passed in input inside their real name.
+                //Controlla anche nei nomi reali degli utenti
                 if(config[1] == 0) {
                     int tot = 0;
                     char **all_login_names = get_all_login_names_from_name(input_names[i], &tot);
@@ -726,7 +779,7 @@ int main(int argc, char *argv[]) {
 
                 } 
                 
-                //Only check inside the ling names.
+                //Controlla solo i nomi di login degli utenti
                 else {
                     struct user *u = find_user(logged_users, logged_users_count, input_names[i]);
                     if(u != NULL) {
@@ -741,12 +794,14 @@ int main(int argc, char *argv[]) {
 
         } 
         
-        //No name is passed as argument, so the logged users will be displayed
+        //Nessun nome viene passato come argomento, quindi gli input user diventano i logged users
         else {
             input_users = logged_users;
             input_users_count = logged_users_count;
         }
 
+
+        // stampa i dati degli utenti con il formato richiesto dagli argomenti
         if(config[0] == 1 || (config[0] == 0 && config[2] == 0)) {
             print_l_format(config[3], input_users_count, input_users);
         }
@@ -754,7 +809,7 @@ int main(int argc, char *argv[]) {
             print_short_format(input_users_count, input_users);
         }
 
-        free(config);
+
         free(input_names);
         free(input_users);
 
@@ -762,5 +817,4 @@ int main(int argc, char *argv[]) {
 
     free(logged_users);
     return 0;
-
 }
