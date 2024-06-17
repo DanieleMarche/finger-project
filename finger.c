@@ -13,12 +13,10 @@
 
 struct user {
     char *login_name; 
-    struct passwd pw;
+    struct passwd *pw;
     struct utmp *utmps;
     int utmp_records;
 };
-
-#define MAX_FIELDS 5 // Numero massimo di campi nel campo GECOS
 
 void print_mail_status(const char *username) {
     char filepath[256];
@@ -138,6 +136,8 @@ void print_file_content(FILE *file) {
     fclose(file);
 }
 
+//If the file with the filename passed in input is found inside the dir passed, the
+// function opens the file and return its FILE is returned, otherwise NULL is returned
 FILE* find_and_open_file(const char *filename, const char *directory) {
     DIR *dir;
     struct dirent *entry;
@@ -197,25 +197,14 @@ char *str_to_lower(const char *str) {
     return lower_str;
 }
 
-
-// Funzione per fare una copia profonda di una struttura passwd
-struct passwd *deep_copy_passwd(struct passwd *src) {
-    struct passwd *dst = malloc(sizeof(struct passwd));
-    if (dst == NULL) return NULL;
-
-    *dst = *src;
-
-    // Copiare le stringhe puntate
-    dst->pw_name = strdup(src->pw_name);
-    dst->pw_passwd = strdup(src->pw_passwd);
-    dst->pw_gecos = strdup(src->pw_gecos);
-    dst->pw_dir = strdup(src->pw_dir);
-    dst->pw_shell = strdup(src->pw_shell);
-
-    return dst;
-}
-
 char **get_all_login_names_from_name(char *name, int *total_login_names) {
+
+    if(strcmp(name, "-") == 0) {
+        printf("No user with name: %s\n", name);
+        *total_login_names = 0; 
+        return NULL;
+    }
+
     char **all_logins = NULL;
     struct passwd *pwd;
     int total_login_found = 0;
@@ -275,7 +264,7 @@ char** split_gecos(char *gecos) {
         exit(EXIT_FAILURE);
     }
 
-    char **fields = malloc(MAX_FIELDS * sizeof(char*));
+    char **fields = malloc(5 * sizeof(char*));
     if (fields == NULL) {
         perror("Memory allocation failure");
         free(gecos_copy);
@@ -284,7 +273,7 @@ char** split_gecos(char *gecos) {
 
     int i = 0;
     char *token = strtok(gecos_copy, ",");
-    while (token != NULL && i < MAX_FIELDS) {
+    while (token != NULL && i < 5) {
         fields[i] = strdup(token);
         if (fields[i] == NULL) {
             perror("Memory allocation failure");
@@ -301,7 +290,7 @@ char** split_gecos(char *gecos) {
     }
 
     // Se ci sono meno di MAX_FIELDS, riempi i restanti con NULL
-    for (int j = i; j < MAX_FIELDS; j++) {
+    for (int j = i; j < 5; j++) {
         fields[j] = NULL;
     }
 
@@ -312,7 +301,7 @@ char** split_gecos(char *gecos) {
 
 // Funzione per liberare l'array di stringhe
 void free_gecos_fields(char **fields) {
-    for (int i = 0; i < MAX_FIELDS; i++) {
+    for (int i = 0; i < 5; i++) {
         if (fields[i] != NULL) {
             free(fields[i]);
         }
@@ -329,71 +318,99 @@ struct user *find_user(struct user *users, int total_users, char *name) {
     return NULL;
 }
 
-
-struct user *add_user(struct user *users, int *total_users, char *login_name, struct utmp *utmp) {
-    // Increment user count
-    (*total_users)++;
-    // Reallocate memory for users array
-    users = (struct user *)realloc(users, (*total_users) * sizeof(struct user));
-    if (users == NULL) {
-        perror("Error reallocating memory for users");
-        exit(EXIT_FAILURE);
-    }
-    // Get a pointer to the new user
-    struct user *u = &users[(*total_users) - 1];
-
-    // Allocate and copy the login name
-    u->login_name = strdup(login_name);
-    if (u->login_name == NULL) {
-        perror("Error duplicating login name");
-        exit(EXIT_FAILURE);
-    }
-
-    // Handle utmp records
-    if (utmp != NULL) {
-        u->utmps = (struct utmp *)calloc(1, sizeof(struct utmp));
-        if (u->utmps == NULL) {
-            perror("Error allocating memory for utmps");
-            exit(EXIT_FAILURE);
-        }
-        memcpy(&u->utmps[0], utmp, sizeof(struct utmp));
-        u->utmp_records = 1;
-    } else {
-        u->utmps = NULL;
-        u->utmp_records = 0;
-    }
-
-    // Get the passwd entry for the user
-    struct passwd *pw = get_pwd_record_by_login_name(login_name);
-    if (pw == NULL) {
-        return NULL;
-    }
-    u->pw = *pw;
-    return &users[(*total_users) - 1];
-}
-
 void add_utmp_record_to_user(struct user *user_record, struct utmp *utmp) {
     user_record->utmp_records++;
-    user_record->utmps = (struct utmp *)realloc(user_record->utmps, user_record->utmp_records * sizeof(struct utmp));
+    user_record->utmps = (struct utmp *) realloc(user_record->utmps, user_record->utmp_records * sizeof(struct utmp));
     if (user_record->utmps == NULL) {
         perror("Error reallocating memory for utmps");
         exit(EXIT_FAILURE);
     }
-    memcpy(&user_record->utmps[user_record->utmp_records - 1], utmp, sizeof(struct utmp));
+    memcpy(&user_record->utmps[user_record->utmp_records - 1], &utmp, sizeof(struct utmp));
 }
 
-void add_existing_user(int *total_users, struct user *users, struct user *u) {
+
+struct user *add_user(struct user *users, int *total_users, char *login_name, struct utmp *utmp) {
+    struct user *temp = find_user(users, *total_users, login_name);
+    if(temp != NULL) {
+        if(utmp != NULL){
+            add_utmp_record_to_user(temp, utmp);
+        }
+        return users;
+    }
+    // Incrementa il numero di utenti
     (*total_users)++;
-    users = (struct user *) realloc(users, *total_users * sizeof(struct user));
-    memcpy(&users[*total_users - 1], u, sizeof(struct user));
+
+    // Rialloca memoria per l'array di utenti
+    users = (struct user*) realloc(users, (*total_users) * sizeof(struct user));
+    if (users == NULL) {
+        perror("Error reallocating memory for users");
+        exit(EXIT_FAILURE);
+    }
+
+    // Alloca e copia il login name
+    users[*total_users - 1].login_name = strdup(login_name);
+
+    if (users[*total_users - 1].login_name == NULL) {
+        perror("Error duplicating login name");
+        exit(EXIT_FAILURE);
+    }
+
+    // Gestisci i record utmp
+    if (utmp != NULL) {
+        users[*total_users - 1].utmps = (struct utmp *)calloc(1, sizeof(struct utmp));
+        if (users[*total_users - 1].utmps == NULL) {
+            perror("Error allocating memory for utmps");
+            exit(EXIT_FAILURE);
+        }
+        memcpy(&users[*total_users - 1].utmps[0], utmp, sizeof(struct utmp));
+        users[*total_users - 1].utmp_records = 1;
+    } else {
+        users[*total_users - 1].utmps = NULL;
+        users[*total_users - 1].utmp_records = 0;
+    }
+
+    // Ottieni il record passwd per l'utente
+    struct passwd *pw = get_pwd_record_by_login_name(login_name);
+    if (pw == NULL) {
+        perror("Error getting passwd record");
+        exit(EXIT_FAILURE);
+    }
+    users[*total_users - 1].pw = pw;
+
+    return users;
 }
 
-struct user *get_users(int fd, int *total_users) {
-    struct user *users = NULL;
+//The list of users is expanded and the last indx points to the user passed.
+struct user *add_existing_user(int *total_users, struct user *users, struct user u) {
+    struct user *temp = find_user(users, *total_users, u.login_name);
+    if(temp != NULL) {
+        return users;
+    }
+    // Incrementare il numero totale di utenti
+    (*total_users)++;
+
+    // Riallocare memoria per l'array di utenti
+    users = (struct user*) realloc(users, (*total_users) * sizeof(struct user ));
+    if (users == NULL) {
+        perror("realloc");
+        exit(EXIT_FAILURE);
+    }
+
+    // Aggiungere il nuovo utente all'array
+    (users)[*total_users - 1] = u;
+
+    return users;
+}
+
+
+//Returns a list of all logged users in the system.
+struct user *get_logged_users(int fd, int *total_users) {
+    struct user* users = NULL;
     struct utmp utmpbuf;
 
     while (read(fd, &utmpbuf, sizeof(utmpbuf)) == sizeof(utmpbuf)) {
         if (utmpbuf.ut_type == USER_PROCESS) {
+
             // Find the corresponding user or add if not exists
             struct user *user_record = find_user(users, *total_users, utmpbuf.ut_user);
             if (user_record == NULL) {
@@ -406,6 +423,7 @@ struct user *get_users(int fd, int *total_users) {
     return users;
 }
 
+//Changes the config array witch the options passed as input
 void change_config(int* config, char* string) {
     int a = strlen(string);
     for(int j = 1; j < a; j++){
@@ -414,22 +432,11 @@ void change_config(int* config, char* string) {
             case 'm': config[1] = 1; break;
             case 's': config[2] = 1; break;
             case 'p': config[3] = 1; break;
-            default: printf("Invalid Option"); exit(EXIT_FAILURE);
+            default: printf("Invalid Option : %c", string[j]); 
+            exit(EXIT_FAILURE);
         }
     }
 
-}
-
-char* get_user_gecos(const char *username, char *gecos_info, size_t len) {
-    struct passwd *pwd = getpwnam(username);
-    if (pwd) {
-        strncpy(gecos_info, pwd->pw_gecos, len - 1);
-        gecos_info[len - 1] = '\0';  // Ensure null termination
-    } else {
-        strncpy(gecos_info, "N/A", len);
-    }
-
-    return gecos_info;
 }
 
 char* format_login_time(time_t login_time) {
@@ -467,6 +474,7 @@ char* format_login_time(time_t login_time) {
     return time_string;  // Return the formatted time string
 }
 
+
 char* time_to_string(time_t time_value) {
   // Allocate memory for the output string
   char* time_string = (char*) malloc(6);  // 5 characters for "hh:mm" + null terminator
@@ -498,7 +506,7 @@ long calculate_idle_time(const char *tty_name) {
 
 void print_s_format_single_user(struct user u) {
     struct utmp *utmp = NULL;
-    struct passwd pw = u.pw;
+    struct passwd *pw = u.pw;
 
     if(u.utmp_records > 0) {
         utmp = &u.utmps[0];
@@ -509,7 +517,7 @@ void print_s_format_single_user(struct user u) {
     long idle_time = 0;
     char *host = "N/A";
     char *login_time_str = "N/A";
-    char **user_gecos = split_gecos(pw.pw_gecos);
+    char **user_gecos = split_gecos(pw->pw_gecos);
 
     if (utmp != NULL) {
         snprintf(tty_path, sizeof(tty_path), "/dev/%s", utmp->ut_line);
@@ -525,12 +533,12 @@ void print_s_format_single_user(struct user u) {
         idle_time > 0 ? time_to_string(idle_time) : default_str,
         utmp ? login_time_str : default_str,
         user_gecos[1] ? user_gecos[1] : default_str,
-        user_gecos[2] ? user_gecos[2] : default_str);
+        user_gecos[2] ? format_phone_number(user_gecos[2]) : default_str);
 
     free_gecos_fields(user_gecos);
 }
 
-void print_s_format(int total_logged_users, struct user *users) {
+void print_short_format(int total_logged_users, struct user *users) {
     printf("%-15s %-15s %-15s %-15s %-15s %-15s %-15s\n", "Login", "Name",
      "Tty", "Idle", "Login Time", "Office", "Office Phone");
 
@@ -581,7 +589,7 @@ void print_plan(char* home_dir) {
             print_file_content(plan); // Potresti voler leggere il file .plan dalla directory home
     }
     else {
-        printf("No plan.");
+        printf("No plan.\n");
     }
 }
 
@@ -600,14 +608,14 @@ void print_device_information(struct user *user) {
     printf("Never logged in.");
 }
 
-void print_finger_output_single_user(int p, struct user *usr) {
+void print_long_format_single_user(int p, struct user *usr) {
 
-    struct passwd pwd = usr->pw;
+    struct passwd *pwd = usr->pw;
 
     // Informazioni di base
     printf("Login: %s\n", usr->login_name);
 
-    char **user_gecos = split_gecos(pwd.pw_gecos);
+    char **user_gecos = split_gecos(pwd->pw_gecos);
     
     printf("Name: %s\n", user_gecos[0] ? user_gecos[0] : "" );
     printf("Office: ");
@@ -621,23 +629,23 @@ void print_finger_output_single_user(int p, struct user *usr) {
         printf("Home Phone: %s\n", format_phone_number(user_gecos[3]));
     }
     
-    printf("Directory: %s\n", pwd.pw_dir);
-    printf("Shell: %s\n", pwd.pw_shell);
+    printf("Directory: %s\n", pwd->pw_dir);
+    printf("Shell: %s\n", pwd->pw_shell);
 
     print_device_information(usr);
 
-    FILE *forward = find_and_open_file(".forward", pwd.pw_dir);
+    FILE *forward = find_and_open_file(".forward", pwd->pw_dir);
 
     if(forward != NULL) {
         print_file_content(forward);
     }
 
     //Stampa i dati di mail status
-    print_mail_status(pwd.pw_name);
+    print_mail_status(pwd->pw_name);
 
     //Se non presente l'opzione p stampa i dati sul plan.
     if(p == 0) {
-        print_plan(pwd.pw_dir);
+        print_plan(pwd->pw_dir);
     } 
 
     // Esci
@@ -647,16 +655,15 @@ void print_finger_output_single_user(int p, struct user *usr) {
 void print_l_format(int p, int total_users, struct user *users) {
 
     for(int i = 0; i < total_users; i++) { 
-        print_finger_output_single_user(p, &users[i]);
+        print_long_format_single_user(p, &users[i]);
     }
     
 }
 
-
 int main(int argc, char *argv[]) {
 
     int fd_utmp; 
-    int total_logged_users = 0;
+    int logged_users_count = 0;
 
     fd_utmp = open(UTMP_FILE, O_RDONLY);
 
@@ -667,11 +674,15 @@ int main(int argc, char *argv[]) {
 
     struct user *logged_users = NULL;
 
-    logged_users = get_users(fd_utmp, &total_logged_users);
+    logged_users = get_logged_users(fd_utmp, &logged_users_count);
 
+    close(fd_utmp);
+
+    
     if (argc <= 1) {
         
-        print_s_format(total_logged_users, logged_users);
+        //No argument is passed, so all logged users are displayed.
+        print_short_format(logged_users_count, logged_users);
 
         free(logged_users);
 
@@ -682,7 +693,7 @@ int main(int argc, char *argv[]) {
         int input_names_count = 0;
 
         for(int i = 1; i < argc; i++) {
-            if(argv[i][0] == '-') {
+            if(argv[i][0] == '-' && strlen(argv[i]) > 1) {
                 change_config(config, argv[i]);
             }
             else{
@@ -691,55 +702,65 @@ int main(int argc, char *argv[]) {
         }
 
         struct user *input_users = NULL;
-        int *total_input_users = 0;
+        int input_users_count = 0;
+       
+        if(input_names_count != 0) {
+            for(int i = 0; i < input_names_count; i++) {
 
-        char **input_users_login_names = NULL;
-        int total_input_users_login_names = 0;
-
-        if(config[1] == 0) {
-            if(input_names_count != 0) {
-                for(int i = 0; i < input_names_count; i++) {
+                //Adds to the input users also the users with the name passed in input inside their real name.
+                if(config[1] == 0) {
                     int tot = 0;
                     char **all_login_names = get_all_login_names_from_name(input_names[i], &tot);
                     
                     for(int i = 0; i < tot; i++) {
-                        struct user *u = find_user(logged_users, total_logged_users, all_login_names[i]);
+                        struct user *u = find_user(logged_users, logged_users_count, all_login_names[i]);
                         if(u != NULL) {
-                            add_existing_user(total_input_users, input_users, u);
+                            input_users = add_existing_user(&input_users_count, input_users, *u);
                         }
                         else {
-                            add_user(input_users, total_input_users, all_login_names[i], NULL);
+                            input_users = add_user(input_users, &input_users_count, all_login_names[i], NULL);
                         }
+                        
                     }
-                    
-                }
-            }
-        } else {
-            for(int i = 0; i < input_names_count; i++) {
-                struct user *u = find_user(logged_users, total_logged_users, input_names[i]);
-                if(u != NULL) {
-                    add_existing_user(total_input_users, input_users, u);
-                }
+                    free(all_login_names);
+
+                } 
+                
+                //Only check inside the ling names.
                 else {
-                    add_user(input_users, total_input_users, input_names[i], NULL);
+                    struct user *u = find_user(logged_users, logged_users_count, input_names[i]);
+                    if(u != NULL) {
+                        input_users = add_existing_user(&input_users_count, input_users, *u);
+                    }
+                    else {
+                        input_users = add_user(input_users, &input_users_count, input_names[i], NULL);
+                    }
                 }
+
             }
-        }
+
+        } 
         
+        //No name is passed as argument, so the logged users will be displayed
+        else {
+            input_users = logged_users;
+            input_users_count = logged_users_count;
+        }
 
         if(config[0] == 1 || (config[0] == 0 && config[2] == 0)) {
-            print_l_format(config[3], *total_input_users, input_users);
+            print_l_format(config[3], input_users_count, input_users);
         }
         else {
-            print_s_format(total_logged_users, logged_users);
+            print_short_format(input_users_count, input_users);
         }
 
         free(config);
         free(input_names);
+        free(input_users);
 
     }
 
-    close(fd_utmp);
+    free(logged_users);
     return 0;
 
 }
