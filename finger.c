@@ -643,10 +643,13 @@ void print_device_information(struct user *user) {
             char last_login_str[256];
             struct tm *tm_info = localtime(&last_login_time);
             strftime(last_login_str, sizeof(last_login_str), "%a %b %d %H:%M", tm_info);
-            printf("Last login %s on %s from %s\n", last_login_str, utmps[i].ut_line, utmps[i].ut_host);
+            printf("On since %s on %s from %s\n", last_login_str, utmps[i].ut_line, utmps[i].ut_host);
+            char tty_path[128];
+            snprintf(tty_path, sizeof(tty_path), "/dev/%s", utmps->ut_line);
+            long idle_time = calculate_idle_time(tty_path);
+            printf("%s idle\n", time_to_string(idle_time));
         
     }
-    printf("Never logged in.\n");
 }
 
 void print_long_format_single_user(int p, struct user *usr) {
@@ -802,7 +805,7 @@ int main(int argc, char *argv[]) {
 
 
         // stampa i dati degli utenti con il formato richiesto dagli argomenti
-        if(config[0] == 1 || (config[0] == 0 && config[2] == 0)) {
+        if(config[0] == 1 || (config[0] == 0 && config[2] == 0 && input_names_count > 0)) {
             print_l_format(config[3], input_users_count, input_users);
         }
         else {
@@ -815,6 +818,5 @@ int main(int argc, char *argv[]) {
 
     }
 
-    free(logged_users);
     return 0;
 }
