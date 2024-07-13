@@ -635,20 +635,31 @@ void print_plan(char* home_dir) {
 }
 
 void print_device_information(struct user *user) {
-
-    for(int i = 0; i < user->utmp_records; i++) {
-            struct utmp *utmps = user->utmps;
-            // Ultimo login
-            time_t last_login_time = utmps[i].ut_tv.tv_sec;
-            char last_login_str[256];
-            struct tm *tm_info = localtime(&last_login_time);
-            strftime(last_login_str, sizeof(last_login_str), "%a %b %d %H:%M", tm_info);
-            printf("On since %s on %s from %s\n", last_login_str, utmps[i].ut_line, utmps[i].ut_host);
-            char tty_path[128];
-            snprintf(tty_path, sizeof(tty_path), "/dev/%s", utmps->ut_line);
-            long idle_time = calculate_idle_time(tty_path);
-            printf("%s idle\n", time_to_string(idle_time));
+    for (int i = 0; i < user->utmp_records; i++) {
+        struct utmp *utmps = user->utmps;
+        // Ultimo login
+        time_t last_login_time = utmps[i].ut_tv.tv_sec;
+        char last_login_str[256];
+        struct tm *tm_info = localtime(&last_login_time);
+        strftime(last_login_str, sizeof(last_login_str), "%a %b %d %H:%M", tm_info);
         
+        // Costruire il percorso del dispositivo
+        char tty_path[128];
+        snprintf(tty_path, sizeof(tty_path), "/dev/%s", utmps[i].ut_line);
+
+        // Controllare se il dispositivo ha il permesso di scrittura
+        bool write_permission_denied = (access(tty_path, W_OK) == -1);
+
+        // Stampare le informazioni del dispositivo
+        printf("On since %s on %s from %s", last_login_str, utmps[i].ut_line, utmps[i].ut_host);
+        if (write_permission_denied) {
+            printf(" (messages off)");
+        }
+        printf("\n");
+
+        // Calcolare e stampare il tempo di inattività
+        long idle_time = calculate_idle_time(tty_path);
+        printf("%s idle\n", time_to_string(idle_time));
     }
 }
 
